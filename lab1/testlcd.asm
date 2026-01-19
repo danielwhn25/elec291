@@ -265,6 +265,8 @@ myprogram:
     setb IT0
     setb IT1
 
+    setb PX0
+
 forever:
     sjmp forever
 
@@ -313,6 +315,11 @@ ISR_EXT1:
     push dpl
     push dph
 
+    mov a, #0x01        ; Clear display command
+    lcall WriteCommand
+    mov R2, #2          ; Wait for clear to finish
+    lcall WaitmilliSec
+
     mov a, #0xC0
     lcall WriteCommand
     mov R2, #2         
@@ -335,16 +342,14 @@ Type1:
     sjmp Type1
 
 done1:
+
     pop dph
     pop dpl
     pop psw
     pop ACC
     reti
 
-;ISR_t0:
-    
-
-----------------------;data----------------------;
+;ISR_t0:----------------------;data----------------------;
 Mystring:
     db 'Hello ELEC291!', 0
 
