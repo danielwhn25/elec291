@@ -49,10 +49,7 @@ org 0x0000
     
     ; External interrupt 0
 org 0x0003
-	ljmp HOURS_ISR
-
-org 0x003B
-	ljmp MINUTES_ISR
+ljmp HOURS_ISR
 
 ; Timer/Counter 0 overflow interrupt vector
 org 0x000B
@@ -61,6 +58,11 @@ org 0x000B
 ; Timer/Counter 2 overflow interrupt vector
 org 0x002B
 	ljmp Timer2_ISR
+
+org 0x003B
+ljmp PINS_ISR
+
+;------------------------DATA SEGMENT-----------------------;
 
 ; In the 8051 we can define direct access variables starting at location 0x30 up to location 0x7F
 dseg at 0x30 		; datasegment
@@ -71,14 +73,16 @@ hours:         ds 1 ; Current BCD hours
 alarm_minutes: ds 1 ; Alarm BCD minutes
 alarm_hours:   ds 1 ; Alarm BCD hours
 
-cursor_pos_top: 	ds 1
-cursor_pos_bottom: 	ds 1
-
 ; In the 8051 we have variables that are 1-bit in size.  We can use the setb, clr, jb, and jnb
 ; instructions with these variables.  This is how you define a 1-bit variable:
+
+
+;-----------------------BINARY SEGMENT---------------------;
 bseg
-up_down_toggle: dbit 1;
 seconds_flag: dbit 1 ; UPDATED FROM EXAMPLE: Set to one in the ISR every time 1000 ms had passed
+
+
+;-----------------------CODE SEGMENT----------------------;
 
 cseg
 ; These 'equ' must match the hardware wiring
@@ -193,6 +197,13 @@ Timer2_ISR_da:
 	da a ; Decimal adjust instruction.  Check datasheet for more details!
 	mov seconds, a
 	
+	cjne a, #0x60, seconds_done 
+    
+    mov seconds, #0x00  ;
+	inc minutes
+    
+seconds_done:
+	
 Timer2_ISR_done:
 	pop psw
 	pop acc
@@ -225,27 +236,6 @@ HOURS_ISR_done:
 
 
 
-;-----------------------MINUTES BUTTON ISR-----------------------;
-MINUTES_ISR:
-    push 	ACC
-    push 	psw
-    push 	dpl
-    push 	dph
-
-	mov 	a, minutes
-	add 	a, #0x01
-	da 		a
-	mov 	minutes, a
-
-	cjne	a, #0x61, minutes_ISR_done ; if minutes == 61, we've rolled over so reset to 0
-	mov		minutes, #0x01
-
-MINUTES_ISR_done:
-    pop dph
-    pop dpl
-    pop psw
-    pop ACC
-    reti
 ;---------------------------------;
 ; Main program. Includes hardware ;
 ; initialization and 'forever'    ;
@@ -262,17 +252,32 @@ main:
           
     lcall Timer0_Init
     lcall Timer2_Init
+
+	mov seconds, #0x00
+	mov minutes, #0x00
+	mov hours, #0x00
+
     setb EA   
+
+;----------------INITIALIZE EXTERNAL INTERRUPT 0-----------------;
 	setb EX0
 	setb IT0
 
-	setb PINEN6
-	setb P1.6
+;----------------INITIALIZE PIN INTERRUPTS--------------;
+
+	; we're going to pins 0.4, 1.1, 1.2, and 1.6
+	; must enable ports 0 and 1 in Pin Interrupt Control (PICON)
+	; However, we cannot look at multiple ports at once, so we can only use pin interrupts for port 1 and then poll port 0.
+	; pins .1, 2, 6
+	mov		PICON, #10011001B
+	mov		PINEN, #01000110B
+
+	orl     EIE, #00000010B
 
 
 
     lcall LCD_4BIT
-	WriteCommand(#0x0e)
+	WriteCommand(#0x0C)
 
 	Set_Cursor(1, 1)
     Send_Constant_String(#Initial_time)
@@ -313,13 +318,63 @@ loop_b:
 	Set_Cursor(1, 7)
 	Display_BCD(hours)
 
+	Set_Cursor(1, 10)
+	Display_BCD(minutes)
+
 	Set_Cursor(1, 13)    ; the place in the LCD where we want the BCD counter value
 	Display_BCD(seconds) ; This macro is also in 'LCD_4bit.inc'
 
-	Set_Cursor(1, 15)
-	Display_BCD(minutes)
+	Set_Cursor(1, 16)
+	Display_BCD('h')
 
     ljmp loop
 		
+;----------------------PINS GENERAL INTERRUPT ISR---------------;
+; all pin interrupts will jump here and so then we'll use a controller to poll which pin it was using PIF register
+
+PINS_ISR:
+    push 	ACC
+    push 	psw
+    push 	dpl
+    push 	dph
+
+	mov		a, PIF	
+	mov     PIF, #0x00 ; clear flags via software as stated in DS
+
+	cjne	#01000000B, a, ELIF_seconds ; if PIF = 01..., then, 1.6 was triggered so that is the minutes interrupt. Otherwise, adjust secs
+
+; fall through if equal
+IF_minutes:
+	mov		b, minutes 
+	add		b, #0x01
+	da		b
+	mov		minutes, b
+
+	cjne	b, #0x61, PINS_ISR_DONE ; if minutes == 61, we've rolled over so reset to 0
+	mov		minutes, #0x00
+	inc		hours
+
+
+
+ELIF_seconds ; poll pin 15 (seconds adjust button)
+
+	mov 	b, seconds
+	add 	b, #0x01 		; add 1 to the seconds counter
+	da 		b		 		; do some magic
+	mov 	seconds, b		; put the updated value back into seconds variable
+
+	cjne	b, #0x61, PINS_ISR_DONE: ; if minutes == 61, we've rolled over so reset to 0. Otherwise, no need to reset so skip
+	mov		minutes, #0x00
+	inc		hours
+
+SECONDS_done:
+	nop
+	
+PINS_ISR_DONE:
+	pop dph
+    pop dpl
+    pop psw
+    pop ACC
+    reti
 
 END
