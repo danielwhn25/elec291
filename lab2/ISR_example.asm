@@ -345,6 +345,11 @@ PINS_ISR:
 
 ; fall through if equal
 IF_minutes:
+	; if we're here, we've established that we want to make a minutes change. 
+	; however, do we want to change alarm or clock though? let's check that here
+
+	cjne 	alarm_toggle, 0, IF_alarm_minutes
+
 	mov		b, minutes 
 	add		b, #0x01
 	da		b
@@ -353,6 +358,9 @@ IF_minutes:
 	cjne	b, #0x61, PINS_ISR_DONE ; if minutes == 61, we've rolled over so reset to 0
 	mov		minutes, #0x00
 	inc		hours
+
+IF_alarm_minutes:
+	mov		
 
 
 
@@ -366,9 +374,6 @@ ELIF_seconds ; poll pin 15 (seconds adjust button)
 	cjne	b, #0x61, PINS_ISR_DONE: ; if minutes == 61, we've rolled over so reset to 0. Otherwise, no need to reset so skip
 	mov		minutes, #0x00
 	inc		hours
-
-SECONDS_done:
-	nop
 	
 PINS_ISR_DONE:
 	pop dph
