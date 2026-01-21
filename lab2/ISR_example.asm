@@ -72,6 +72,7 @@ minutes:       ds 1 ; Current BCD minutes
 hours:         ds 1 ; Current BCD hours
 alarm_minutes: ds 1 ; Alarm BCD minutes
 alarm_hours:   ds 1 ; Alarm BCD hours
+alarm_toggle:  ds 1 ; turn on/off alarm
 
 ; In the 8051 we have variables that are 1-bit in size.  We can use the setb, clr, jb, and jnb
 ; instructions with these variables.  This is how you define a 1-bit variable:
@@ -99,8 +100,8 @@ $include(LCD_4bit.inc) ; A library of LCD related functions and utility macros
 $LIST
 
 ;                     1234567890123456    <- This helps determine the location of the counter
-Initial_time:  db 'Time: 00:00:00', 0
-Alarm_time:    db 'Alarm:00:00', 0
+Initial_time:  db 'Time  00:00:00', 0
+Alarm_time:    db 'Alarm 00:00', 0
 
 
 ;---------------------------------;
@@ -217,6 +218,10 @@ HOURS_ISR:
     push 	dpl
     push 	dph
 
+	; check if we're modifying alarm_hours or not 
+	mov		a, alarm_hours
+	cjne	a, #0x0, alarm_hours_routine
+
 	; this ISR will set the hours
 	; we want to increment the hours variable by one
 	mov 	a, hours
@@ -226,6 +231,18 @@ HOURS_ISR:
 
 	cjne	a, #0x13, HOURS_ISR_done ; if hours == 13, we've rolled over so reset to 1
 	mov		hours, #0x01
+
+alarm_hours_routine:
+	;alarm hours routien code;
+	mov		a, alarm_hours
+	add		a, #0x01
+	da		a
+	mov		alarm_hours, a
+
+	; check overflow it flows when hours = 13 (>12)
+
+	cjne	a, #0x13, HOURS_ISR_done
+	mov		alarm_hours, #0x01
 
 HOURS_ISR_done:
     pop dph
@@ -242,27 +259,28 @@ HOURS_ISR_done:
 ; loop.                           ;
 ;---------------------------------;
 main:
-    mov SP, #0x7F
-    mov P0M1, #0x00
-    mov P0M2, #0x00
-    mov P1M1, #0x00
-    mov P1M2, #0x00
-    mov P3M2, #0x00
-	mov P3M1, #0x00
+    mov 		SP  , #0x7F
+    mov 		P0M1, #0x00
+    mov 		P0M2, #0x00
+    mov 		P1M1, #0x00
+    mov 		P1M2, #0x00
+    mov 		P3M2, #0x00
+	mov 		P3M1, #0x00
           
     lcall Timer0_Init
     lcall Timer2_Init
 
-	mov seconds, #0x00
-	mov minutes, #0x00
-	mov hours, #0x00
+	mov 		seconds			, #0x00
+	mov 		minutes			, #0x00
+	mov 		hours			, #0x00
+	mov 		alarm_minutes	, #0x00
+	mov			alarm_hours		, #0x00
 
     setb EA   
 
 ;----------------INITIALIZE EXTERNAL INTERRUPT 0-----------------;
 	setb EX0
 	setb IT0
-
 ;----------------INITIALIZE PIN INTERRUPTS--------------;
 
 	; we're going to pins 0.4, 1.1, 1.2, and 1.6
@@ -324,8 +342,8 @@ loop_b:
 	Set_Cursor(1, 13)    ; the place in the LCD where we want the BCD counter value
 	Display_BCD(seconds) ; This macro is also in 'LCD_4bit.inc'
 
-	Set_Cursor(1, 16)
-	Display_BCD('h')
+	;Set_Cursor(1, 16)
+	;Display_BCD('h')
 
     ljmp loop
 		
@@ -341,37 +359,52 @@ PINS_ISR:
 	mov		a, PIF	
 	mov     PIF, #0x00 ; clear flags via software as stated in DS
 
-	cjne	#01000000B, a, ELIF_seconds ; if PIF = 01..., then, 1.6 was triggered so that is the minutes interrupt. Otherwise, adjust secs
+	cjne	a, #01000000B, ELIF_seconds ; if PIF = 01..., then, 1.6 was triggered so that is the minutes interrupt. Otherwise, adjust secs
 
 ; fall through if equal
 IF_minutes:
 	; if we're here, we've established that we want to make a minutes change. 
 	; however, do we want to change alarm or clock though? let's check that here
+	; if alarm minutes = 1, then we want to change the alarm
+	mov		a, alarm_toggle
+	cjne 	a, #0x0H, IF_alarm_minutes
 
-	cjne 	alarm_toggle, 0, IF_alarm_minutes
+	mov		a, minutes 
+	add		a, #0x01
+	da		a
+	mov		minutes, a
 
-	mov		b, minutes 
-	add		b, #0x01
-	da		b
-	mov		minutes, b
-
-	cjne	b, #0x61, PINS_ISR_DONE ; if minutes == 61, we've rolled over so reset to 0
+	; overflow check
+	cjne	a, #0x61, minutes_done ; if minutes == 61, we've rolled over so reset to 0. go to minutes_done if there is no overflow. End ISR
 	mov		minutes, #0x00
 	inc		hours
 
+minutes_done:
+	ljmp	PINS_ISR_DONE
+
 IF_alarm_minutes:
-	mov		
+	; first increment the minutes and check for rollover
+	mov		a, alarm_minutes
+	add		a, 0x01	
+	da		a
+	mov		alarm_minutes, a
+
+	cjne	a, #0x61, alarm_minutes_done
+	mov		alarm_minutes, #0x0
+	inc		alarm_hours
+
+alarm_minutes_done:
+	ljmp	PINS_ISR_DONE
 
 
+ELIF_seconds: ; poll pin 15 (seconds adjust button)
 
-ELIF_seconds ; poll pin 15 (seconds adjust button)
+	mov 	a, seconds
+	add 	a, #0x01 		; add 1 to the seconds counter
+	da 		a		 		; do some magic
+	mov 	seconds, a		; put the updated value back into seconds variable
 
-	mov 	b, seconds
-	add 	b, #0x01 		; add 1 to the seconds counter
-	da 		b		 		; do some magic
-	mov 	seconds, b		; put the updated value back into seconds variable
-
-	cjne	b, #0x61, PINS_ISR_DONE: ; if minutes == 61, we've rolled over so reset to 0. Otherwise, no need to reset so skip
+	cjne	a, #0x61, PINS_ISR_DONE ; if minutes == 61, we've rolled over so reset to 0. Otherwise, no need to reset so skip
 	mov		minutes, #0x00
 	inc		hours
 	
