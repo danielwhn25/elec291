@@ -36,6 +36,7 @@ UPDOWN        equ P1.1
 CLEAR_BUTTON  equ P1.5
 SOUND_OUT     equ P1.7
 AMPM_BUTTON   equ P1.2
+;555_rst 	  equ P1.0
 
 ; Reset vector
 org 0x0000
@@ -282,6 +283,8 @@ main:
     mov         P1M2, #0x00
     mov         P3M2, #0x00
     mov         P3M1, #0x00
+	anl         P1M1, #01111110B 
+    orl         P1M2, #10000001B
 
 
           
@@ -297,7 +300,8 @@ main:
     clr         alarm_toggle    ; Initialize edit mode bit to zero
     clr         alarm_AMPM_toggle ; 0 = AM
     clr         clock_AMPM_toggle ; 0 = AM
-    
+   ; setb			555_rst			;, #0x00 ; extra feature!!!!!!!
+   setb			P1.0
 
     setb EA   
 
@@ -373,25 +377,25 @@ toggle_alarm_ampm_man:
 
 check_clear:
 
-    jb CLEAR_BUTTON, loop_a  ; if (CLEAR_BUTTON) skip
+    jb 		CLEAR_BUTTON, loop_a  ; if (CLEAR_BUTTON) skip
     Wait_Milli_Seconds(#50) ; Debounce delay.  
-    jb CLEAR_BUTTON, loop_a  ; another check
-    jnb CLEAR_BUTTON, $     ; Wait for button release.  
+    jb 		CLEAR_BUTTON, loop_a  ; another check
+    jnb 	CLEAR_BUTTON, $     ; Wait for button release.  
     ; A valid press of the 'CLEAR' button has been detected, reset the BCD counter.
-    clr TR2                 ; Stop timer 2
-    clr a
-    mov Count1ms+0, a
-    mov Count1ms+1, a
+    clr 	TR2                 ; Stop timer 2
+    clr 	a
+    mov 	Count1ms+0, a
+    mov 	Count1ms+1, a
     ; Now clear the BCD counter
-    mov seconds, a
-    setb TR2                ; Start timer 2
-    sjmp loop_b              ; Display the new value
+    mov 	seconds, a
+    setb 	TR2                ; Start timer 2
+    sjmp 	loop_b              ; Display the new value
 loop_a:
-    jb seconds_flag, loop_b  ; If flag is set, jump over the long jump to the display code
-    ljmp loop                ; Otherwise, use a Long Jump to reach the distant top
+    jb 		seconds_flag, loop_b  ; If flag is set, jump over the long jump to the display code
+    ljmp 	loop                ; Otherwise, use a Long Jump to reach the distant top
 loop_b:
 
-    clr seconds_flag     ; We clear this flag in the main loop, but it is set in the ISR for timer 2
+    clr 	seconds_flag     ; We clear this flag in the main loop, but it is set in the ISR for timer 2
 
     Set_Cursor(1, 7)
     Display_BCD(hours)
@@ -399,14 +403,14 @@ loop_b:
     Set_Cursor(1, 10)
     Display_BCD(minutes)
 
-    Set_Cursor(1, 13)    ; the place in the LCD where we want the BCD counter value
+    Set_Cursor(1, 13)    
     Display_BCD(seconds) 
 
-    ; Display Clock AM/PM
     Set_Cursor(1, 15)
     jb clock_AMPM_toggle, show_clock_pm_str
     Send_Constant_String(#clock_AM)
     sjmp display_alarm_data
+
 show_clock_pm_str:
     Send_Constant_String(#clock_PM)
 
@@ -417,38 +421,43 @@ display_alarm_data:
     Set_Cursor(2, 10)
     Display_BCD(alarm_minutes)
 
-    ; Display Alarm AM/PM
     Set_Cursor(2, 12)
     jb alarm_AMPM_toggle, show_alarm_pm_str
     Send_Constant_String(#alarm_AM)
-    sjmp alarm_compare_logic
+    sjmp alarm_compare_logic_label
 show_alarm_pm_str:
     Send_Constant_String(#alarm_PM)
 
-;-----------------------ALARM COMPARISON-----------------------;
-alarm_compare_logic:
-    mov a, hours
-    cjne a, alarm_hours, alarm_beep_stop 
+;-----------------------ALARM COMPARISON-----------------------------------;
+alarm_compare_logic_label:
+    mov         a, hours
+    cjne        a, alarm_hours, alarm_beep_stop 
     
-    mov a, minutes
-    cjne a, alarm_minutes, alarm_beep_stop 
+    mov         a, minutes
+    cjne        a, alarm_minutes, alarm_beep_stop 
 
-    ; --- Bit Logic Fix for AM/PM ---
-    jb clock_AMPM_toggle, check_pm_match
-    jb alarm_AMPM_toggle, alarm_beep_stop  
-    sjmp start_the_beep                    
+    jb          clock_AMPM_toggle, check_pm_match
+    jb          alarm_AMPM_toggle, alarm_beep_stop  
+    sjmp        check_alarm_enabled                    
 
 check_pm_match:
-    jnb alarm_AMPM_toggle, alarm_beep_stop ; Clock is PM, Alarm is AM -> No match
+    jnb         alarm_AMPM_toggle, alarm_beep_stop  
+
+check_alarm_enabled:
+    ; If alarm_toggle is 0 (OFF), we jump to stop beeping immediately
+    ; even though the hours/minutes/AMPM match perfectly.
+    jnb         alarm_toggle, alarm_beep_stop
 
 start_the_beep:
-    setb ET0 ; Enable the 2kHz interrupt
-    ljmp loop
+    setb        ET0 ; Enable sound interrupt
+    setb        P1.0 ; Enable LED Blinker
+    ljmp        loop
 
-alarm_beep_stop:
-    clr ET0  ; Silence the buzzer
-    clr SOUND_OUT
-    ljmp loop
+alarm_beep_stop:  
+    clr         ET0 ; Disable sound interrupt 
+    clr         SOUND_OUT ; Force speaker pin low to stop buzz
+    clr         P1.0 ; Turn off LED Blinker
+    ljmp        loop
         
 ;----------------------PINS (1.1, 1.2, and 1.6) GENERAL INTERRUPT ISR---------------;
 ; all pin interrupts will jump here and so then we'll use a controller to poll which pin it was using PIF register
@@ -503,15 +512,15 @@ ELIF_seconds: ; poll pin 15 (seconds adjust button)
 
     mov     a, seconds
     add     a, #0x01        ; add 1 to the seconds counter
-    da      a               ; do some magic
-    mov     seconds, a      ; put the updated value back into seconds variable
+    da      a               ; decima adjust
+    mov     seconds, a      ; put the updated value back into seconds variable 
 
     cjne    a, #0x60, PINS_ISR_DONE ; Check rollover at 60
     mov     seconds, #0x00
     
 PINS_ISR_DONE:
-    pop psw
-    pop ACC
+    pop 	psw
+    pop 	ACC
     reti
 
 END
