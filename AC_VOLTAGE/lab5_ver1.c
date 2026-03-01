@@ -4,6 +4,13 @@
 // (c) 2008-2023, Jesus Calvino-Fraga
 //
 
+/***************************************
+   NAMES DANIEL NG, KRISH VASHIST 
+   DATE  7 MARCH 2026
+   PHASE MEASUREMENT AND PEAK DETECTION
+***************************************/
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <EFM8LB1.h>
@@ -12,9 +19,20 @@
 
 #define SYSCLK 72000000L
 #define BAUDRATE 115200L
-#define SARCLK 18000000L
+#define SARCLK 18000000L // 
 #define CH1 QFP32_MUX_P2_1
 #define CH2 QFP32_MUX_P2_2
+
+// add in timer frequencies here from "All_timers.c"
+#define SYSCLK 72000000L // SYSCLK frequency in Hz
+#define TIMER_0_FREQ 1000L
+#define TIMER_1_FREQ 2000L
+
+#define TIMER_OUT_0 P2_0
+#define TIMER_OUT_1 P1_7
+
+#define MAIN_OUT    P0_1 // Updated in the main program
+
 
 char _c51_external_startup (void)
 {
@@ -63,11 +81,60 @@ char _c51_external_startup (void)
 	#else
 		#error SYSCLK must be either 12250000L, 24500000L, 48000000L, or 72000000L
 	#endif
+
+	// Configure the pins used for square output
+	P0MDOUT|=0b_1100_0010;
+	P1MDOUT|=0b_1111_1111;
+	P2MDOUT|=0b_0000_0001;
 	
 	P0MDOUT |= 0x10; // Enable UART0 TX as push-pull output
 	XBR0     = 0x01; // Enable UART0 on P0.4(TX) and P0.5(RX)                     
 	XBR1     = 0X00;
 	XBR2     = 0x40; // Enable crossbar and weak pull-ups
+
+	// Initialize timer 0 for periodic interrupts
+	TR0=0;
+	TF0=0;
+	CKCON0 &= 0b_00000000; // Timer 0 uses clk divided by 12
+	TMOD&=0xf0;
+	TMOD|=0x01; // Timer 0 in mode 1: 16-bit timer
+	// Initialize reload value
+	TMR0=0; // reload value =0
+	ET0=1;     // Enable Timer0 interrupts
+	TR0=1;     // Start Timer0
+
+	// Initialize timer 1 for periodic interrupts
+	TR1=0;
+	TF1=0;
+	CKCON0 &= 0b_00000000; // Timer 1 uses clk divided by 12
+	TMOD&=0x0f;
+	TMOD|=0x10; // Timer 1 in mode 1: 16-bit timer
+	// Initialize reload value
+	TMR1=0; // reload value =0
+	ET1=1;     // Enable Timer1 interrupts
+	TR1=1;     // Start Timer1
+	
+	EA=1; // Enable interrupts
+	
+	return 0;
+}
+
+
+void Timer0_ISR (void) interrupt INTERRUPT_TIMER0
+{
+	SFRPAGE=0x0;
+	// Timer 0 in 16-bit mode doesn't have auto reload
+	TMR0=0 // technically not necessary since it naturally overflows to 0
+	TIMER_OUT_0=!TIMER_OUT_0;
+}
+
+void Timer1_ISR (void) interrupt INTERRUPT_TIMER1
+{
+	SFRPAGE=0x0;
+	// Timer 1 in 16-bit mode doesn't have auto reload
+	TMR1=0;
+	TIMER_OUT_1=!TIMER_OUT_1;
+}
 
 	// Configure Uart 0
 	#if (((SYSCLK/BAUDRATE)/(2L*12L))>0xFFL)
@@ -82,7 +149,7 @@ char _c51_external_startup (void)
 	TI = 1;  // Indicate TX0 ready
   	
 	return 0;
-}
+
 
 void InitADC (void)
 {
@@ -143,6 +210,8 @@ void Timer3us(unsigned char us)
 	TMR3CN0 = 0 ;                   // Stop Timer3 and clear overflow flag
 }
 
+/* ADC code starts here */
+
 void waitms (unsigned int ms)
 {
 	unsigned int j;
@@ -151,7 +220,7 @@ void waitms (unsigned int ms)
 		for (k=0; k<4; k++) Timer3us(250);
 }
 
-#define VDD 3.284 // The measured value of VDD in volts
+#define VDD 3.284 // The measured value of 3.3V in volts
 
 void InitPinADC (unsigned char portno, unsigned char pinno)
 {
@@ -202,6 +271,9 @@ void main (void)
 {
 	float v[4];
     float peak1, peak2;
+	float peak1max = 0;
+	float peak2max = 0;
+	float temp1, temp2;
 
     waitms(500); // Give PuTTy a chance to start before sending
 	printf("\x1b[2J"); // Clear screen using ANSI escape sequence.
@@ -233,13 +305,20 @@ void main (void)
         peak1 = Volts_at_Pin(CH1);
         peak2 = Volts_at_Pin(CH2);
 
-		printf ("V@P2.2=%7.5fV, V@P2.3=%7.5fV, V@P2.4=%7.5fV, V@P2.5=%7.5fV, peak 1 voltage = %7.5fV, peak 2 voltage = %7.5fV\r",
-                &v[0], &v[1], &v[2], &v[3], &peak1, &peak2);
+		printf ("V@P2.2=%7.5fV, V@P2.3=%7.5fV, V@P2.4=%7.5fV, V@P2.5=%7.5fV\r", v[0], v[1], v[2], v[3]);
+
 		waitms(500);
 
-        // Read from the ADC and determine the max
+        // contantly update the current value of the channel voltage
 
+		temp1 = Volts_at_Pin(CH1);
+		if (temp1 > peak1max)
+			peak1max = temp1;
+		temp2 = Volts_at_Pin(CH2);
+		if (temp2 > peak2max)
+			peak2max = temp2;
 
+		
 
 
         
