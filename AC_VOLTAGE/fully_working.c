@@ -445,7 +445,7 @@ void main (void)
 		 *  %+4.0fd  = 4 chars  (e.g. "+30d" or "-15d") for line 1
 		 *  " ref"   = 4 chars                           for line 2
 		 ***************************************************************/
-		sprintf(lcd1, "%4.0fHz%5.2fV%+4.0fd", f0, v1rms, phase);
+		sprintf(lcd1, "%4.0fHz%5.2fV%+4.0f ", f0, v1rms, phase);
 		sprintf(lcd2, "%4.0fHz%5.2fV ref",     f0, v2rms);
 		LCDprint(lcd1, 1, 1);
 		LCDprint(lcd2, 2, 1);
