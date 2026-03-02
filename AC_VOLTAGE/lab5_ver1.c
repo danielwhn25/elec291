@@ -99,8 +99,7 @@ char _c51_external_startup (void)
 	TMOD|=0x01; // Timer 0 in mode 1: 16-bit timer
 	// Initialize reload value
 	TMR0=0; // reload value =0
-	ET0=1;     // Enable Timer0 interrupts
-	TR0=1;     // Start Timer0
+	TR1 = 1;
 
 	// Initialize timer 1 for periodic interrupts
 	TR1=0;
@@ -122,7 +121,7 @@ char _c51_external_startup (void)
 	TMOD |=  0x20;                       
 	TI = 1;  // Indicate TX0 ready
   	
-	ET1=1;     // Enable Timer1 interrupts
+	ET1=0;     // Enable Timer1 interrupts
 	TR1=1;     // Start Timer1
 	
 	EA=1; // Enable interrupts
@@ -274,12 +273,12 @@ void main (void)
     float v1, v2;
 	float v1max = 0;
 	float v2max = 0;
-	float T0, T1;
+	float T0, T1, f0, f1;
 
     waitms(500); 		// Give PuTTy a chance to start before sending
 	printf("\x1b[2J"); 	// Clear screen using ANSI escape sequence.
 	
-	printf ("ADC test program\n"
+	printf ("Lab 5: AC Peak and Phase\n"
 	        "File: %s\n"
 	        "Compiled: %s, %s\n\n",
 	        __FILE__, __DATE__, __TIME__);
@@ -291,63 +290,66 @@ void main (void)
 	InitPinADC(2, 5); // Configure P2.5 as analog input
     InitADC();
 
-
 /**********************************************************************
 ******************************INFINITE LOOP****************************
 **********************************************************************/
 	while(1)
 	{
-		// TR0/1 are the start/stop 
+
+		v1max = 0;
+
+		v1 = Volts_at_Pin(CH1);
+
+		while (v1 < 0.05)
+		{
+			v1 = Volts_at_Pin(CH1);
+		}
+
+		while (v1 > 0.05) // measure it at the pos hump
+		{
+			if (v1 > v1max)
+				v1max = v1;
+
+			v1 = Volts_at_Pin(CH1);
+		}
+
 		TR0 = 0;
-		TR1 = 0;
-		
-		// initialize v1 and v2
+		TMR0 = 0;
+		TR0 = 1;
 
-		v1 = Volts_at_Pin(CH1); 
-		
-		// in this loop, we keep reading v1 and also determine the max
-		while (!(v1 > 0 && v1 < 0.05))
-		{
-			// keep updating the voltage of channel 1
-			v1 = Volts_at_Pin(CH1);
-			v1max = (v1 > v1max) ? v1 : v1max; // constantly update the max value of v1 RMS
-		}
-		// once we know have idenfied the first zero crossing point, we can start the 
-		// timer to determine the next zero crossing point
-		TR0 = 1; // start timer 0
-		while (!(v1 > 0 && v1 < 0.05))
+		while (v1 < 0.05)
 		{
 			v1 = Volts_at_Pin(CH1);
 		}
-		TR0 = 0; // stop timer 0 because we have identified the second zero crossing point
-		T0 = 2.0 * TMR0 * ((float) 12/ SYSCLK);	     
-		
-		// REPEAT FOR CHANNEL 2
 
-		v2 = Volts_at_Pin(CH2);
-		while (!(v2 > 0 && v2 < 0.05))
-		{
-			v2 = Volts_at_Pin(CH2);
-			v2max = (v2 > v2max) ? v2 : v2max; 
-		}
-		TR0 = 1; 
-		while (!(v2 > 0 && v2 < 0.05))
-		{
-			v2 = Volts_at_Pin(CH2);
-		}
-		TR0 = 0; 
-		T1 = 2.0 * TMR0 * ((float) 12/ SYSCLK);	
+		TR0 = 0;
+
+		T0 = 2.0 * TMR0 * ((float)12 / SYSCLK);
+		f0 = 1.0 / T0;
+
+		printf("\x1b[H"); 
+//
+		
+
+		printf("CH1 Period:    %7.5f s       \n", T0);
+		printf("CH1 V_PEAK:      %7.5f V       \n", v1max);
+		printf("CH1 V_RMS:	   %7.5f V       \n", v1max / 1.41421356237);
+		printf("CH1 Frequency: %7.5f Hz      \n", f0);
+
+		waitms(500);
 	 
-
+		/*
 		v[0] = Volts_at_Pin(QFP32_MUX_P2_2);
 		v[1] = Volts_at_Pin(QFP32_MUX_P2_3);
 		v[2] = Volts_at_Pin(QFP32_MUX_P2_4);
 		v[3] = Volts_at_Pin(QFP32_MUX_P2_5);
 
-		//printf ("V@P2.2=%7.5fV, V@P2.3=%7.5fV, V@P2.4=%7.5fV, V@P2.5=%7.5fV\r", v[0], v[1], v[2], v[3]);
-		printf("CH1 period = %7.5fV, CH1 max = %7.5fV\r", T0, v1max);
-		printf("CH2 period = %7.5fV, CH2 max = %7.5fV\r", T1, v2max);
+		printf ("V@P2.2=%7.5fV, V@P2.3=%7.5fV, V@P2.4=%7.5fV, V@P2.5=%7.5fV\r", v[0], v[1], v[2], v[3]);
+		printf("CH1 period = %7.5f seconds, CH1 max = %7.5fV\r", T0, v1max);
 		waitms(500);
+		printf("CH2 period = %7.5f seconds, CH2 max = %7.5fV\r", T1, v2max);
+		waitms(500);
+		*/
 	}
 }	
 
