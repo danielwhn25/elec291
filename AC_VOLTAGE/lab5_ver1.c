@@ -17,7 +17,6 @@
 
 // ~C51~  
 
-#define SYSCLK 72000000L
 #define BAUDRATE 115200L
 #define SARCLK 18000000L // 
 #define CH1 QFP32_MUX_P2_1
@@ -111,12 +110,25 @@ char _c51_external_startup (void)
 	TMOD|=0x10; // Timer 1 in mode 1: 16-bit timer
 	// Initialize reload value
 	TMR1=0; // reload value =0
+
+		// Configure Uart 0
+	#if (((SYSCLK/BAUDRATE)/(2L*12L))>0xFFL)
+		#error Timer 0 reload value is incorrect because (SYSCLK/BAUDRATE)/(2L*12L) > 0xFF
+	#endif
+	SCON0 = 0x10;
+	TH1 = 0x100-((SYSCLK/BAUDRATE)/(2L*12L));
+	TL1 = TH1;      // Init Timer1
+	TMOD &= ~0xf0;  // TMOD: timer 1 in 8-bit auto-reload
+	TMOD |=  0x20;                       
+	TI = 1;  // Indicate TX0 ready
+  	
 	ET1=1;     // Enable Timer1 interrupts
 	TR1=1;     // Start Timer1
 	
 	EA=1; // Enable interrupts
 	
 	return 0;
+	
 }
 
 
@@ -124,7 +136,7 @@ void Timer0_ISR (void) interrupt INTERRUPT_TIMER0
 {
 	SFRPAGE=0x0;
 	// Timer 0 in 16-bit mode doesn't have auto reload
-	TMR0=0 // technically not necessary since it naturally overflows to 0
+	TMR0=0; // technically not necessary since it naturally overflows to 0
 	TIMER_OUT_0=!TIMER_OUT_0;
 }
 
@@ -136,19 +148,7 @@ void Timer1_ISR (void) interrupt INTERRUPT_TIMER1
 	TIMER_OUT_1=!TIMER_OUT_1;
 }
 
-	// Configure Uart 0
-	#if (((SYSCLK/BAUDRATE)/(2L*12L))>0xFFL)
-		#error Timer 0 reload value is incorrect because (SYSCLK/BAUDRATE)/(2L*12L) > 0xFF
-	#endif
-	SCON0 = 0x10;
-	TH1 = 0x100-((SYSCLK/BAUDRATE)/(2L*12L));
-	TL1 = TH1;      // Init Timer1
-	TMOD &= ~0xf0;  // TMOD: timer 1 in 8-bit auto-reload
-	TMOD |=  0x20;                       
-	TR1 = 1; // START Timer1
-	TI = 1;  // Indicate TX0 ready
-  	
-	return 0;
+
 
 
 void InitADC (void)
@@ -270,20 +270,21 @@ float Volts_at_Pin(unsigned char pin)
 void main (void)
 {
 	float v[4];
-    float peak1, peak2;
-	float peak1max = 0;
-	float peak2max = 0;
-	float temp1, temp2;
 
-    waitms(500); // Give PuTTy a chance to start before sending
-	printf("\x1b[2J"); // Clear screen using ANSI escape sequence.
+    float v1, v2;
+	float v1max = 0;
+	float v2max = 0;
+	float T0, T1;
+
+    waitms(500); 		// Give PuTTy a chance to start before sending
+	printf("\x1b[2J"); 	// Clear screen using ANSI escape sequence.
 	
 	printf ("ADC test program\n"
 	        "File: %s\n"
 	        "Compiled: %s, %s\n\n",
 	        __FILE__, __DATE__, __TIME__);
 	
-    InitPinADC(2, 1);
+    InitPinADC(2, 1); // Configure P2.1 as analog input
 	InitPinADC(2, 2); // Configure P2.2 as analog input
 	InitPinADC(2, 3); // Configure P2.3 as analog input
 	InitPinADC(2, 4); // Configure P2.4 as analog input
@@ -292,36 +293,61 @@ void main (void)
 
 
 /**********************************************************************
-********************************INFINITE LOOP**************************
+******************************INFINITE LOOP****************************
 **********************************************************************/
 	while(1)
 	{
-	    // Read 14-bit value from the pins configured as analog inputs
+		// TR0/1 are the start/stop 
+		TR0 = 0;
+		TR1 = 0;
+		
+		// initialize v1 and v2
+
+		v1 = Volts_at_Pin(CH1); 
+		
+		// in this loop, we keep reading v1 and also determine the max
+		while (!(v1 > 0 && v1 < 0.05))
+		{
+			// keep updating the voltage of channel 1
+			v1 = Volts_at_Pin(CH1);
+			v1max = (v1 > v1max) ? v1 : v1max; // constantly update the max value of v1 RMS
+		}
+		// once we know have idenfied the first zero crossing point, we can start the 
+		// timer to determine the next zero crossing point
+		TR0 = 1; // start timer 0
+		while (!(v1 > 0 && v1 < 0.05))
+		{
+			v1 = Volts_at_Pin(CH1);
+		}
+		TR0 = 0; // stop timer 0 because we have identified the second zero crossing point
+		T0 = 2.0 * TMR0 * ((float) 12/ SYSCLK);	     
+		
+		// REPEAT FOR CHANNEL 2
+
+		v2 = Volts_at_Pin(CH2);
+		while (!(v2 > 0 && v2 < 0.05))
+		{
+			v2 = Volts_at_Pin(CH2);
+			v2max = (v2 > v2max) ? v2 : v2max; 
+		}
+		TR0 = 1; 
+		while (!(v2 > 0 && v2 < 0.05))
+		{
+			v2 = Volts_at_Pin(CH2);
+		}
+		TR0 = 0; 
+		T1 = 2.0 * TMR0 * ((float) 12/ SYSCLK);	
+	 
+
 		v[0] = Volts_at_Pin(QFP32_MUX_P2_2);
 		v[1] = Volts_at_Pin(QFP32_MUX_P2_3);
 		v[2] = Volts_at_Pin(QFP32_MUX_P2_4);
 		v[3] = Volts_at_Pin(QFP32_MUX_P2_5);
-        
-        peak1 = Volts_at_Pin(CH1);
-        peak2 = Volts_at_Pin(CH2);
 
-		printf ("V@P2.2=%7.5fV, V@P2.3=%7.5fV, V@P2.4=%7.5fV, V@P2.5=%7.5fV\r", v[0], v[1], v[2], v[3]);
-
+		//printf ("V@P2.2=%7.5fV, V@P2.3=%7.5fV, V@P2.4=%7.5fV, V@P2.5=%7.5fV\r", v[0], v[1], v[2], v[3]);
+		printf("CH1 period = %7.5fV, CH1 max = %7.5fV\r", T0, v1max);
+		printf("CH2 period = %7.5fV, CH2 max = %7.5fV\r", T1, v2max);
 		waitms(500);
-
-        // contantly update the current value of the channel voltage
-
-		temp1 = Volts_at_Pin(CH1);
-		if (temp1 > peak1max)
-			peak1max = temp1;
-		temp2 = Volts_at_Pin(CH2);
-		if (temp2 > peak2max)
-			peak2max = temp2;
-
-		
-
-
-        
-	 }  
+	}
 }	
 
