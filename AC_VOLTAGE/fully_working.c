@@ -377,9 +377,18 @@ void main (void)
 		overflow2 = 0;
 		TR2 = 1;  // START phase timer at CH1 rising edge
 
-		// Wait for CH2 rising edge, counting overflows
+		// If CH1 lags CH2, CH2 is already mid-hump when CH1 rises.
+		// Wait for CH2 current hump to END first, then catch the next
+		// rising edge. This gives the correct negative delta_t.
+		// If CH1 leads CH2, CH2 is still in valley so the first loop
+		// exits immediately — no extra delay, works correctly either way.
 		v2 = Volts_at_Pin(CH2);
-		while (v2 < THRESH2)
+		while (v2 > THRESH2)               // skip current hump if mid-hump
+		{
+			if (TF2H) { TF2H = 0; overflow2++; }
+			v2 = Volts_at_Pin(CH2);
+		}
+		while (v2 < THRESH2)               // wait for next rising edge
 		{
 			if (TF2H) { TF2H = 0; overflow2++; }
 			v2 = Volts_at_Pin(CH2);
@@ -445,7 +454,7 @@ void main (void)
 		 *  %+4.0fd  = 4 chars  (e.g. "+30d" or "-15d") for line 1
 		 *  " ref"   = 4 chars                           for line 2
 		 ***************************************************************/
-		sprintf(lcd1, "%4.0fHz%5.2fV%+4.0f ", f0, v1rms, phase);
+		sprintf(lcd1, "%4.0fHz%5.2fV%+4.0f", f0, v1rms, phase);
 		sprintf(lcd2, "%4.0fHz%5.2fV ref",     f0, v2rms);
 		LCDprint(lcd1, 1, 1);
 		LCDprint(lcd2, 2, 1);
